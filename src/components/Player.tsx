@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { 
   Play, Pause, Volume2, List, Settings, 
   LogOut, Tv, ChevronRight, ChevronLeft,
-  Loader2, Maximize, AlertCircle
+  Loader2, Maximize, AlertCircle, Smartphone
 } from "lucide-react";
 
 interface PlayerProps {
@@ -16,6 +16,7 @@ interface PlayerProps {
 }
 
 export default function Player({ customer, onLogout }: PlayerProps) {
+  const [deviceMode, setDeviceMode] = useState<"mobile" | "tv">("tv");
   const [channels, setChannels] = useState<Channel[]>([]);
   const [currentChannel, setCurrentChannel] = useState<Channel | null>(null);
   const [loading, setLoading] = useState(true);
@@ -25,6 +26,14 @@ export default function Player({ customer, onLogout }: PlayerProps) {
   const [focusedIndex, setFocusedIndex] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+
+  // Auto-adjust layout for mobile if screen is small, but respect state
+  useEffect(() => {
+    if (window.innerWidth < 768) {
+      setDeviceMode("mobile");
+      setSidebarOpen(false);
+    }
+  }, []);
 
   // Fetch channels based on customer packs
   useEffect(() => {
@@ -192,20 +201,35 @@ export default function Player({ customer, onLogout }: PlayerProps) {
   }
 
   return (
-    <div className="h-screen w-full flex flex-row overflow-hidden relative">
-      {/* Sidebar for TV Mode */}
+    <div className={`h-screen w-full flex overflow-hidden relative bg-black ${deviceMode === "mobile" ? "flex-col" : "flex-row"}`}>
+      {/* Sidebar / Channel List */}
       <motion.aside 
         initial={false}
-        animate={{ width: sidebarOpen ? 320 : 0, opacity: sidebarOpen ? 1 : 0 }}
+        animate={{ 
+          width: deviceMode === "tv" ? (sidebarOpen ? 320 : 0) : "100%",
+          height: deviceMode === "tv" ? "100%" : (sidebarOpen ? "70%" : 0),
+          opacity: sidebarOpen ? 1 : 0,
+          position: deviceMode === "mobile" ? "absolute" : "relative",
+          bottom: deviceMode === "mobile" ? 0 : "auto",
+          left: 0,
+          zIndex: 40
+        }}
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
-        className="bg-[#121212] border-r border-gray-800 flex flex-col h-full z-20"
+        className="bg-[#0a0a0a] border-r border-gray-800 flex flex-col z-20 shadow-2xl shadow-black"
       >
         <div className="p-6 space-y-6 overflow-hidden">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-black text-red-600 uppercase tracking-tighter">TajaTV</h2>
-            <button onClick={onLogout} title="Cerrar Sesión">
-              <LogOut className="w-5 h-5 text-gray-500 hover:text-white transition-colors" />
-            </button>
+            <div className="flex items-center gap-2">
+              {deviceMode === "mobile" && (
+                <button onClick={() => setSidebarOpen(false)} className="bg-white/5 p-2 rounded-lg text-white">
+                  Cerrar
+                </button>
+              )}
+              <button onClick={onLogout} title="Cerrar Sesión">
+                <LogOut className="w-5 h-5 text-gray-500 hover:text-white transition-colors" />
+              </button>
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -306,6 +330,28 @@ export default function Player({ customer, onLogout }: PlayerProps) {
               >
                 <List className="w-6 h-6" />
               </button>
+              
+              {/* Device Mode Selector */}
+              <div className="bg-black/40 backdrop-blur-md p-1 rounded-full border border-white/10 flex gap-1">
+                 <button 
+                   onClick={() => setDeviceMode("tv")}
+                   className={`p-2 rounded-full transition-all ${deviceMode === "tv" ? "bg-red-600 text-white" : "text-gray-400 hover:text-white"}`}
+                   title="Modo TV"
+                 >
+                    <Tv className="w-5 h-5" />
+                 </button>
+                 <button 
+                   onClick={() => {
+                     setDeviceMode("mobile");
+                     setSidebarOpen(false);
+                   }}
+                   className={`p-2 rounded-full transition-all ${deviceMode === "mobile" ? "bg-red-600 text-white" : "text-gray-400 hover:text-white"}`}
+                   title="Modo Celular"
+                 >
+                    <Smartphone className="w-5 h-5" />
+                 </button>
+              </div>
+
               {currentChannel && (
                 <div className="bg-black/40 backdrop-blur-md px-4 py-2 rounded-xl border border-white/10">
                    <p className="text-white font-bold leading-none">{currentChannel.name}</p>
