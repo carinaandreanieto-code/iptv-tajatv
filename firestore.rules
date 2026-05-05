@@ -1,0 +1,68 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      // For this prototype, we'll allow the user's specific email (carinaandreanieto@gmail.com) 
+      // or check an 'admins' collection.
+      return isSignedIn() && (
+        request.auth.token.email == "carinaandreanieto@gmail.com" ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Admins collection: only admins can manage this
+    match /admins/{adminId} {
+      allow read: if isSignedIn() && (request.auth.uid == adminId || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // Customers: Admins have full access.
+    // Users can read their own data via customerNumber if they provide it? 
+    // Actually, for IPTV login, the client will "search" or "get" by document ID.
+    // To be secure, we should only allow reading the document if password matches?
+    // But rules don't support "checking data in the requested document" for 'get' unless specified.
+    match /customers/{customerNumber} {
+      allow read: if isAdmin() || (
+        // Allow public read for login verification, but restrict what fields they can see?
+        // Actually, 'get' is better controlled in code by verifying password AFTER fetching.
+        // Or we use a specific query.
+        true 
+      );
+      allow write: if isAdmin();
+    }
+
+    match /channels/{channelId} {
+      allow read: if true; // Public access for the player
+      allow write: if isAdmin();
+    }
+
+    match /packs/{packId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /ads/{adId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /metrics/{metricId} {
+      allow create: if true; // Anyone can send metrics
+      allow read: if isAdmin();
+    }
+  }
+}

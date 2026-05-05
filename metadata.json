@@ -1,0 +1,6 @@
+{
+  "name": "TajaTV",
+  "description": "Plataforma IPTV multiplataforma con gestión de clientes, packs de canales y panel de administración.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

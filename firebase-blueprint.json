@@ -1,0 +1,72 @@
+{
+  "entities": {
+    "Customer": {
+      "title": "Customer",
+      "description": "User of the IPTV service",
+      "type": "object",
+      "properties": {
+        "customerNumber": { "type": "string" },
+        "password": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "expirationDate": { "type": "string", "format": "date-time" },
+        "assignedPacks": { "type": "array", "items": { "type": "string" } },
+        "lastLogin": { "type": "string", "format": "date-time" }
+      },
+      "required": ["customerNumber", "password", "status", "expirationDate"]
+    },
+    "Channel": {
+      "title": "Channel",
+      "description": "IPTV Stream Channel",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "url": { "type": "string" },
+        "logo": { "type": "string" },
+        "category": { "type": "string" }
+      },
+      "required": ["name", "url"]
+    },
+    "Pack": {
+      "title": "Pack",
+      "description": "Bundle of channels",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "channels": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["name", "channels"]
+    },
+    "Ad": {
+      "title": "Ad",
+      "description": "Login screen advertisement",
+      "type": "object",
+      "properties": {
+        "imageUrl": { "type": "string" },
+        "title": { "type": "string" },
+        "text": { "type": "string" },
+        "whatsappNumber": { "type": "string" },
+        "startDate": { "type": "string", "format": "date-time" },
+        "endDate": { "type": "string", "format": "date-time" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["imageUrl", "title", "text", "whatsappNumber", "active"]
+    },
+    "Metric": {
+      "title": "Metric",
+      "description": "Usage metrics",
+      "type": "object",
+      "properties": {
+        "channelId": { "type": "string" },
+        "userId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "firestore": {
+    "customers": { "schema": "Customer", "description": "Client accounts" },
+    "channels": { "schema": "Channel", "description": "Stream metadata" },
+    "packs": { "schema": "Pack", "description": "Channel groupings" },
+    "ads": { "schema": "Ad", "description": "Promo content" },
+    "metrics": { "schema": "Metric", "description": "Usage logs" }
+  }
+}
