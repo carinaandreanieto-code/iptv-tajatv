@@ -28,6 +28,7 @@ export default function Admin({ onBack }: AdminProps) {
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
   const [adminPassword, setAdminPassword] = useState("");
   const [adminError, setAdminError] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("clientes");
   
   // Data states
@@ -40,13 +41,21 @@ export default function Admin({ onBack }: AdminProps) {
   const [editingItem, setEditingItem] = useState<any>(null);
 
   useEffect(() => {
-    // Check if session is already active
-    const sessionActive = sessionStorage.getItem("adminSession") === "true";
-    if (sessionActive) {
-      setIsAdminLoggedIn(true);
-      fetchData();
-    }
-  }, [activeTab]);
+    const unsub = auth.onAuthStateChanged((user) => {
+      const sessionActive = sessionStorage.getItem("adminSession") === "true";
+      // Auto-validate if it's the specific owner email even without sessionActive
+      const isOwner = user?.email === "carinaandreanieto@gmail.com";
+      
+      if (user && (sessionActive || isOwner)) {
+        setIsAdminLoggedIn(true);
+        if (isOwner) sessionStorage.setItem("adminSession", "true");
+        fetchData();
+      } else if (!sessionActive) {
+        setIsAdminLoggedIn(false);
+      }
+    });
+    return unsub;
+  }, []);
 
   const fetchData = async () => {
     try {
@@ -66,12 +75,29 @@ export default function Admin({ onBack }: AdminProps) {
     }
   };
 
-  const handleAdminLogin = (e: React.FormEvent) => {
+  const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (adminPassword === "tajamar123") {
-      setIsAdminLoggedIn(true);
-      sessionStorage.setItem("adminSession", "true");
-      fetchData();
+      try {
+        setIsLoggingIn(true);
+        setAdminError(false);
+        const result = await signInWithPopup(auth, googleProvider);
+        if (result.user) {
+          setIsAdminLoggedIn(true);
+          sessionStorage.setItem("adminSession", "true");
+          await fetchData();
+        }
+      } catch (err: any) {
+        console.error("Auth error", err);
+        if (err.code === 'auth/popup-blocked') {
+          alert('El navegador bloqueó la ventana emergente. Por favor, habilítala.');
+        } else if (err.code !== 'auth/popup-closed-by-user') {
+          alert('Error al iniciar sesión: ' + err.message);
+        }
+        setAdminError(true);
+      } finally {
+        setIsLoggingIn(false);
+      }
     } else {
       setAdminError(true);
       setTimeout(() => setAdminError(false), 2000);
@@ -79,6 +105,7 @@ export default function Admin({ onBack }: AdminProps) {
   };
 
   const handleAdminLogout = () => {
+    signOut(auth);
     setIsAdminLoggedIn(false);
     sessionStorage.removeItem("adminSession");
   };
@@ -167,14 +194,48 @@ export default function Admin({ onBack }: AdminProps) {
   };
 
   const handleSaveCustomer = async (data: any) => {
-    if (editingItem) {
-      await updateDoc(doc(db, "customers", editingItem.id), data);
-    } else {
-      await addDoc(collection(db, "customers"), data);
+    try {
+      if (editingItem) {
+        await updateDoc(doc(db, "customers", editingItem.id), data);
+      } else {
+        await addDoc(collection(db, "customers"), data);
+      }
+      setIsModalOpen(false);
+      setEditingItem(null);
+      fetchData();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `customers/${editingItem?.id || 'new'}`);
     }
-    setIsModalOpen(false);
-    setEditingItem(null);
-    fetchData();
+  };
+
+  const handleSaveChannel = async (data: any) => {
+    try {
+      if (editingItem) {
+        await updateDoc(doc(db, "channels", editingItem.id), data);
+      } else {
+        await addDoc(collection(db, "channels"), data);
+      }
+      setIsModalOpen(false);
+      setEditingItem(null);
+      fetchData();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `channels/${editingItem?.id || 'new'}`);
+    }
+  };
+
+  const handleSavePack = async (data: any) => {
+    try {
+      if (editingItem) {
+        await updateDoc(doc(db, "packs", editingItem.id), data);
+      } else {
+        await addDoc(collection(db, "packs"), data);
+      }
+      setIsModalOpen(false);
+      setEditingItem(null);
+      fetchData();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `packs/${editingItem?.id || 'new'}`);
+    }
   };
 
   if (!isAdminLoggedIn) {
@@ -200,9 +261,17 @@ export default function Admin({ onBack }: AdminProps) {
               />
               <button 
                 type="submit"
-                className="w-full bg-white text-black font-bold py-4 rounded-2xl hover:bg-gray-200 transition-all flex items-center justify-center gap-3"
+                disabled={isLoggingIn}
+                className="w-full bg-white text-black font-bold py-4 rounded-2xl hover:bg-gray-200 transition-all flex items-center justify-center gap-3 disabled:opacity-50"
               >
-                 Acceder al Panel
+                 {isLoggingIn ? (
+                   <>
+                     <RefreshCw className="w-5 h-5 animate-spin" />
+                     Iniciando Sesión...
+                   </>
+                 ) : (
+                   "Acceder al Panel"
+                 )}
               </button>
            </form>
            
@@ -382,9 +451,22 @@ export default function Admin({ onBack }: AdminProps) {
                           <p className="text-xs text-gray-600 truncate max-w-xs font-mono">{c.url}</p>
                         </td>
                         <td className="px-6 py-4 text-right">
-                          <button onClick={async () => { if(confirm('¿Eliminar canal?')) { await deleteDoc(doc(db, 'channels', c.id!)); fetchData(); } }} className="p-2 bg-red-600/10 text-red-500 hover:bg-red-600/20 rounded-lg transition-all opacity-0 group-hover:opacity-100">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button 
+                              onClick={() => { setEditingItem(c); setIsModalOpen(true); }} 
+                              className="p-2 bg-white/10 text-white hover:bg-white/20 rounded-lg transition-all"
+                              title="Editar Canal"
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                            <button 
+                              onClick={async () => { if(confirm('¿Eliminar canal?')) { await deleteDoc(doc(db, 'channels', c.id!)); fetchData(); } }} 
+                              className="p-2 bg-red-600/10 text-red-500 hover:bg-red-600/20 rounded-lg transition-all"
+                              title="Eliminar Canal"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -409,9 +491,20 @@ export default function Admin({ onBack }: AdminProps) {
                    <div className="w-12 h-12 bg-red-600/10 rounded-xl flex items-center justify-center">
                       <Package className="w-6 h-6 text-red-600" />
                    </div>
-                   <button onClick={async () => { if(confirm('¿Borrar pack?')) { await deleteDoc(doc(db, 'packs', pack.id)); fetchData(); } }} className="text-gray-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
-                      <Trash2 className="w-4 h-4" />
-                   </button>
+                   <div className="flex items-center gap-2 opacity-100 lg:opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button 
+                        onClick={() => { setEditingItem(pack); setIsModalOpen(true); }} 
+                        className="text-gray-500 hover:text-white transition-colors"
+                      >
+                         <Edit2 className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={async () => { if(confirm('¿Borrar pack?')) { await deleteDoc(doc(db, 'packs', pack.id)); fetchData(); } }} 
+                        className="text-gray-500 hover:text-red-500 transition-colors"
+                      >
+                         <Trash2 className="w-4 h-4" />
+                      </button>
+                   </div>
                 </div>
                 <div>
                    <h4 className="text-xl font-bold text-white">{pack.name}</h4>
@@ -482,21 +575,21 @@ export default function Admin({ onBack }: AdminProps) {
             >
               <div className="flex items-center justify-between">
                 <h4 className="text-2xl font-black text-white">
-                  {editingItem ? 'Editar' : 'Nuevo/a'} {activeTab === 'clientes' ? 'Cliente' : activeTab === 'iptv' ? 'Lista M3U' : activeTab === 'packs' ? 'Pack' : 'Anuncio'}
+                  {editingItem ? 'Editar' : 'Nuevo/a'} {activeTab === 'clientes' ? 'Cliente' : activeTab === 'iptv' ? (editingItem ? 'Canal' : 'Lista M3U') : activeTab === 'packs' ? 'Pack' : 'Anuncio'}
                 </h4>
-                <button onClick={() => setIsModalOpen(false)}><X className="w-6 h-6 text-gray-500" /></button>
+                <button onClick={() => { setIsModalOpen(false); setEditingItem(null); }}><X className="w-6 h-6 text-gray-500" /></button>
               </div>
 
               {activeTab === "iptv" ? (
-                <M3U8Form onImport={handleM3U8Import} />
+                editingItem ? (
+                  <ChannelForm initialData={editingItem} onSave={handleSaveChannel} />
+                ) : (
+                  <M3U8Form onImport={handleM3U8Import} />
+                )
               ) : activeTab === "clientes" ? (
                 <CustomerForm initialData={editingItem} onSave={handleSaveCustomer} packs={packs} />
               ) : activeTab === "packs" ? (
-                <PackForm channels={channels} onSave={async (data) => {
-                  await addDoc(collection(db, "packs"), data);
-                  setIsModalOpen(false);
-                  fetchData();
-                }} />
+                <PackForm initialData={editingItem} channels={channels} onSave={handleSavePack} />
               ) : activeTab === "publicidad" ? (
                 <AdForm onSave={async (data) => {
                   await addDoc(collection(db, "ads"), data);
@@ -568,9 +661,9 @@ function AdForm({ onSave }: any) {
   );
 }
 
-function PackForm({ channels, onSave }: any) {
-  const [name, setName] = useState("");
-  const [selectedChannels, setSelectedChannels] = useState<string[]>([]);
+function PackForm({ initialData, channels, onSave }: any) {
+  const [name, setName] = useState(initialData?.name || "");
+  const [selectedChannels, setSelectedChannels] = useState<string[]>(initialData?.channels || []);
   const [searchChan, setSearchChan] = useState("");
 
   const filteredChannels = channels.filter((c: any) => 
@@ -618,7 +711,7 @@ function PackForm({ channels, onSave }: any) {
          disabled={!name || selectedChannels.length === 0}
          className="w-full bg-red-600 text-white font-black py-4 rounded-xl disabled:opacity-50"
        >
-          Crear Pack
+          {initialData ? "Actualizar Pack" : "Crear Pack"}
        </button>
     </div>
   );
@@ -676,12 +769,63 @@ function MetricsView({ channels }: { channels: Channel[] }) {
                          <p className="text-xs font-bold text-white">Usuario: {m.userId}</p>
                          <p className="text-[10px] text-gray-600">Sintonizó {chan?.name || 'un canal'}</p>
                       </div>
-                      <p className="text-[10px] text-gray-500 font-mono">{new Date(m.timestamp).toLocaleTimeString()}</p>
+                      <p className="text-[10px] text-gray-500 font-mono">
+                        {m.timestamp ? (m.timestamp.toDate ? m.timestamp.toDate().toLocaleTimeString() : new Date(m.timestamp).toLocaleTimeString()) : 'N/A'}
+                      </p>
                    </div>
                 );
              })}
           </div>
        </div>
+    </div>
+  );
+}
+
+function ChannelForm({ initialData, onSave }: any) {
+  const [form, setForm] = useState({
+    name: initialData?.name || "",
+    category: initialData?.category || "",
+    url: initialData?.url || "",
+    logo: initialData?.logo || ""
+  });
+
+  return (
+    <div className="space-y-6">
+       <div className="space-y-2">
+          <label className="text-xs font-bold text-gray-500 uppercase">Nombre del Canal</label>
+          <input 
+            value={form.name} 
+            onChange={e => setForm({...form, name: e.target.value})} 
+            className="w-full bg-[#1a1a1a] border border-gray-800 rounded-xl px-4 py-3 text-white outline-none focus:ring-1 focus:ring-red-600" 
+          />
+       </div>
+       <div className="space-y-2">
+          <label className="text-xs font-bold text-gray-500 uppercase">Categoría</label>
+          <input 
+            value={form.category} 
+            onChange={e => setForm({...form, category: e.target.value})} 
+            className="w-full bg-[#1a1a1a] border border-gray-800 rounded-xl px-4 py-3 text-white outline-none focus:ring-1 focus:ring-red-600" 
+          />
+       </div>
+       <div className="space-y-2">
+          <label className="text-xs font-bold text-gray-500 uppercase">URL del Stream (M3U8)</label>
+          <input 
+            value={form.url} 
+            onChange={e => setForm({...form, url: e.target.value})} 
+            className="w-full bg-[#1a1a1a] border border-gray-800 rounded-xl px-4 py-3 text-white outline-none font-mono text-xs focus:ring-1 focus:ring-red-600" 
+          />
+       </div>
+       <div className="space-y-2">
+          <label className="text-xs font-bold text-gray-500 uppercase">URL del Logo (Opcional)</label>
+          <input 
+            value={form.logo} 
+            onChange={e => setForm({...form, logo: e.target.value})} 
+            className="w-full bg-[#1a1a1a] border border-gray-800 rounded-xl px-4 py-3 text-white outline-none focus:ring-1 focus:ring-red-600" 
+          />
+       </div>
+       <button onClick={() => onSave(form)} className="w-full bg-red-600 text-white font-black py-4 rounded-xl">
+          Actualizar Canal
+       </button>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { collection, getDocs, addDoc, query, where } from "firebase/firestore";
-import { db } from "../lib/firebase";
+import { db, handleFirestoreError, OperationType } from "../lib/firebase";
 import { Customer, Channel, Pack, Metric } from "../types";
 import Hls from "hls.js";
 import { motion, AnimatePresence } from "motion/react";
@@ -146,11 +146,18 @@ export default function Player({ customer, onLogout }: PlayerProps) {
     }
 
     // Log Metric
-    addDoc(collection(db, "metrics"), {
-      channelId: currentChannel.id,
-      userId: customer.customerNumber,
-      timestamp: new Date().toISOString()
-    });
+    const logMetric = async () => {
+      try {
+        await addDoc(collection(db, "metrics"), {
+          channelId: currentChannel.id,
+          userId: customer.customerNumber,
+          timestamp: new Date().toISOString()
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, "metrics");
+      }
+    };
+    logMetric();
 
     // Save for persistence
     localStorage.setItem(`lastChannel_${customer.customerNumber}`, currentChannel.id);
