@@ -75,18 +75,21 @@ export default function Admin({ onBack }: AdminProps) {
   const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (adminPassword === "tajamar123") {
+      setIsLoggingIn(true);
+      setAdminError(false);
       try {
-        setIsLoggingIn(true);
-        setAdminError(false);
-        const result = await signInAnonymously(auth);
-        if (result.user) {
-          setIsAdminLoggedIn(true);
-          sessionStorage.setItem("adminSession", "true");
-          await fetchData();
+        // Try anonymous sign-in for security consistency, but don't block if it's disabled in console
+        try {
+          await signInAnonymously(auth);
+        } catch (authErr) {
+          console.warn("Anonymous auth disabled in console. Proceeding with local session.", authErr);
         }
+        
+        setIsAdminLoggedIn(true);
+        sessionStorage.setItem("adminSession", "true");
+        await fetchData();
       } catch (err: any) {
-        console.error("Auth error", err);
-        alert('Error al acceder: ' + err.message + '. Asegúrese de tener habilitado el inicio de sesión anónimo en Firebase.');
+        console.error("Fetch error", err);
         setAdminError(true);
       } finally {
         setIsLoggingIn(false);
