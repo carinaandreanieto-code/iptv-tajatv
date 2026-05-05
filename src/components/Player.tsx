@@ -20,6 +20,7 @@ export default function Player({ customer, onLogout }: PlayerProps) {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [currentChannel, setCurrentChannel] = useState<Channel | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showControls, setShowControls] = useState(true);
   const [videoError, setVideoError] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState<string>("Todos");
@@ -27,7 +28,18 @@ export default function Player({ customer, onLogout }: PlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
 
-  // Auto-adjust layout for mobile if screen is small, but respect state
+  // Auto-hide controls
+  useEffect(() => {
+    if (!showControls) return;
+    const timer = setTimeout(() => {
+      if (deviceMode === "tv" && !sidebarOpen) {
+         setShowControls(false);
+      }
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [showControls, sidebarOpen, deviceMode]);
+
+  // Handle auto-mode
   useEffect(() => {
     if (window.innerWidth < 768) {
       setDeviceMode("mobile");
@@ -68,6 +80,7 @@ export default function Player({ customer, onLogout }: PlayerProps) {
         setLoading(false);
       }
     };
+
     fetchContent();
   }, [customer]);
 
@@ -255,12 +268,20 @@ export default function Player({ customer, onLogout }: PlayerProps) {
               <button
                 key={channel.id}
                 onMouseEnter={() => setFocusedIndex(idx)}
-                onClick={() => setCurrentChannel(channel)}
-                className={`w-full flex items-center gap-4 px-3 py-3.5 rounded-xl transition-all text-left ${
-                  idx === focusedIndex 
-                    ? "bg-white/10 ring-1 ring-white/20 shadow-xl" 
+                onClick={() => {
+                  setCurrentChannel(channel);
+                  setFocusedIndex(idx);
+                  if (deviceMode === "mobile") {
+                    setSidebarOpen(false);
+                  }
+                }}
+                className={`w-full flex items-center gap-4 px-3 py-3.5 rounded-xl transition-all text-left active:scale-95 touch-manipulation ${
+                  currentChannel?.id === channel.id
+                    ? "bg-red-600/20 ring-1 ring-red-600/50 shadow-xl border-l-4 border-red-600 pl-2" 
+                    : idx === focusedIndex
+                    ? "bg-white/10"
                     : "hover:bg-white/5"
-                } ${currentChannel?.id === channel.id ? "border-l-4 border-red-600 pl-2" : ""}`}
+                }`}
               >
                 <div className="w-12 h-12 rounded-lg bg-[#1a1a1a] flex-shrink-0 flex items-center justify-center overflow-hidden border border-gray-800">
                   {channel.logo ? (
@@ -287,10 +308,13 @@ export default function Player({ customer, onLogout }: PlayerProps) {
       </motion.aside>
 
       {/* Main Player Area */}
-      <main className="flex-1 bg-black relative group">
+      <main 
+        onClick={() => setShowControls(prev => !prev)}
+        className="flex-1 bg-black relative group cursor-pointer"
+      >
         <video 
           ref={videoRef}
-          className="w-full h-full object-contain"
+          className="w-full h-full object-contain pointer-events-none"
           playsInline
           autoPlay
           onDoubleClick={(e) => (e.target as HTMLVideoElement).requestFullscreen()}
@@ -320,7 +344,7 @@ export default function Player({ customer, onLogout }: PlayerProps) {
         </AnimatePresence>
 
         {/* Overlay Controls (Auto-hide) */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-8">
+        <div className={`absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/40 transition-opacity flex flex-col justify-between p-8 ${showControls || sidebarOpen ? "opacity-100" : "opacity-0"}`}>
           <div className="flex justify-between items-start">
             <div className="flex items-center gap-3">
               <button 
