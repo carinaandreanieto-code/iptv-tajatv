@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   collection, getDocs, addDoc, updateDoc, deleteDoc, doc, 
   query, where, orderBy, limit, Timestamp 
@@ -26,8 +26,9 @@ type Tab = "clientes" | "iptv" | "packs" | "publicidad" | "metricas";
 
 export default function Admin({ onBack }: AdminProps) {
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
+  const [adminPassword, setAdminPassword] = useState("");
+  const [adminError, setAdminError] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("clientes");
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
   
   // Data states
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -39,16 +40,12 @@ export default function Admin({ onBack }: AdminProps) {
   const [editingItem, setEditingItem] = useState<any>(null);
 
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged((user) => {
-      if (user?.email === "carinaandreanieto@gmail.com") {
-        setIsAdminLoggedIn(true);
-        fetchData();
-      } else {
-        setIsAdminLoggedIn(false);
-      }
-      setIsAuthLoading(false);
-    });
-    return unsub;
+    // Check if session is already active
+    const sessionActive = sessionStorage.getItem("adminSession") === "true";
+    if (sessionActive) {
+      setIsAdminLoggedIn(true);
+      fetchData();
+    }
   }, [activeTab]);
 
   const fetchData = async () => {
@@ -69,12 +66,21 @@ export default function Admin({ onBack }: AdminProps) {
     }
   };
 
-  const handleAdminLogin = async () => {
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (err) {
-      console.error("Login Error", err);
+  const handleAdminLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (adminPassword === "tajamar123") {
+      setIsAdminLoggedIn(true);
+      sessionStorage.setItem("adminSession", "true");
+      fetchData();
+    } else {
+      setAdminError(true);
+      setTimeout(() => setAdminError(false), 2000);
     }
+  };
+
+  const handleAdminLogout = () => {
+    setIsAdminLoggedIn(false);
+    sessionStorage.removeItem("adminSession");
   };
 
   const handleM3U8Import = async (url: string) => {
@@ -171,27 +177,35 @@ export default function Admin({ onBack }: AdminProps) {
     fetchData();
   };
 
-  if (isAuthLoading) return null;
-
   if (!isAdminLoggedIn) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#050505] p-6 text-center">
-        <div className="max-w-sm space-y-8">
+        <div className="max-w-sm w-full space-y-8">
            <div className="space-y-4">
               <div className="w-20 h-20 bg-red-600/10 rounded-3xl flex items-center justify-center mx-auto border border-red-600/20">
                  <ShieldCheck className="w-10 h-10 text-red-600" />
               </div>
               <h1 className="text-3xl font-black text-white">Panel de Control</h1>
-              <p className="text-gray-500 text-sm">Este acceso está reservado únicamente para administradores autorizados de TajaTV.</p>
+              <p className="text-gray-500 text-sm">Ingrese la clave de administrador para continuar.</p>
            </div>
            
-           <button 
-             onClick={handleAdminLogin}
-             className="w-full bg-white text-black font-bold py-4 rounded-2xl hover:bg-gray-200 transition-all flex items-center justify-center gap-3"
-           >
-              <img src="https://www.google.com/favicon.ico" className="w-4 h-4" />
-              Ingresar con Google
-           </button>
+           <form onSubmit={handleAdminLogin} className="space-y-4">
+              <input 
+                type="password"
+                required
+                value={adminPassword}
+                onChange={(e) => setAdminPassword(e.target.value)}
+                className={`w-full bg-[#121212] border ${adminError ? 'border-red-500' : 'border-gray-800'} rounded-2xl px-6 py-4 text-white text-center focus:ring-1 focus:ring-red-600 outline-none transition-all`}
+                placeholder="••••••••"
+              />
+              <button 
+                type="submit"
+                className="w-full bg-white text-black font-bold py-4 rounded-2xl hover:bg-gray-200 transition-all flex items-center justify-center gap-3"
+              >
+                 Acceder al Panel
+              </button>
+           </form>
+           
            <button onClick={onBack} className="text-gray-500 text-xs hover:text-white transition-colors">Volver al Inicio</button>
         </div>
       </div>
@@ -217,14 +231,16 @@ export default function Admin({ onBack }: AdminProps) {
 
         <div className="p-6 border-t border-gray-800 space-y-4">
            <div className="flex items-center gap-3">
-              <img src={auth.currentUser?.photoURL || ""} className="w-10 h-10 rounded-xl" />
+              <div className="w-10 h-10 bg-red-600 rounded-xl flex items-center justify-center font-black text-white">
+                 A
+              </div>
               <div className="min-w-0">
-                 <p className="text-xs font-bold text-white truncate">{auth.currentUser?.displayName}</p>
+                 <p className="text-xs font-bold text-white truncate">Operador TajaTV</p>
                  <p className="text-[10px] text-gray-500 truncate">Administrador</p>
               </div>
            </div>
            <button 
-             onClick={() => signOut(auth)}
+             onClick={handleAdminLogout}
              className="w-full flex items-center justify-center gap-2 p-3 bg-red-600/10 hover:bg-red-600/20 text-red-500 rounded-xl transition-all font-bold text-xs"
            >
               <LogOut className="w-4 h-4" />
