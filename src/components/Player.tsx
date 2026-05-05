@@ -19,6 +19,7 @@ export default function Player({ customer, onLogout }: PlayerProps) {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [currentChannel, setCurrentChannel] = useState<Channel | null>(null);
   const [loading, setLoading] = useState(true);
+  const [videoError, setVideoError] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState<string>("Todos");
   const [focusedIndex, setFocusedIndex] = useState(0);
@@ -64,6 +65,7 @@ export default function Player({ customer, onLogout }: PlayerProps) {
   // Handle Video Playback
   useEffect(() => {
     if (!currentChannel || !videoRef.current) return;
+    setVideoError(false);
 
     const video = videoRef.current;
 
@@ -74,24 +76,38 @@ export default function Player({ customer, onLogout }: PlayerProps) {
       const hls = new Hls({
         startLevel: -1,
         enableWorker: true,
+        xhrSetup: (xhr) => {
+          xhr.withCredentials = false;
+        },
+        manifestLoadingRetryDelay: 1000,
+        manifestLoadingMaxRetry: 5,
       });
       hlsRef.current = hls;
       hls.loadSource(currentChannel.url);
       hls.attachMedia(video);
+      
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        video.play().catch(e => console.log("Autoplay blocked", e));
+        setVideoError(false);
+        video.play().catch(e => {
+          console.log("Autoplay blocked, waiting for interaction", e);
+        });
       });
       
       hls.on(Hls.Events.ERROR, (_, data) => {
+        console.error("HLS Error:", data);
         if (data.fatal) {
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
+              console.log("Fatal network error, trying to recover...");
               hls.startLoad();
               break;
             case Hls.ErrorTypes.MEDIA_ERROR:
+              console.log("Fatal media error, trying to recover...");
               hls.recoverMediaError();
               break;
             default:
+              console.error("Unrecoverable error");
+              setVideoError(true);
               hls.destroy();
               break;
           }
@@ -101,6 +117,9 @@ export default function Player({ customer, onLogout }: PlayerProps) {
       video.src = currentChannel.url;
       video.addEventListener('loadedmetadata', () => {
         video.play();
+      });
+      video.addEventListener('error', () => {
+        setVideoError(true);
       });
     }
 
@@ -249,8 +268,32 @@ export default function Player({ customer, onLogout }: PlayerProps) {
           ref={videoRef}
           className="w-full h-full object-contain"
           playsInline
+          autoPlay
           onDoubleClick={(e) => (e.target as HTMLVideoElement).requestFullscreen()}
         />
+
+        {/* Loading / Error States */}
+        <AnimatePresence>
+          {videoError && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center gap-4 z-10"
+            >
+              <AlertCircle className="w-16 h-16 text-red-600 mb-2" />
+              <div className="text-center">
+                <h3 className="text-xl font-bold text-white">Error de Transmisión</h3>
+                <p className="text-gray-500 text-sm max-w-xs mt-2">No se pudo cargar la señal de <span className="text-red-500 font-bold">{currentChannel?.name}</span>. El servidor podría estar fuera de línea o el formato no es soportado.</p>
+              </div>
+              <button 
+                onClick={() => window.location.reload()}
+                className="mt-4 px-6 py-2 bg-white text-black font-bold rounded-lg hover:bg-gray-200 transition-all"
+              >
+                Reintentar Conexión
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Overlay Controls (Auto-hide) */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-8">
