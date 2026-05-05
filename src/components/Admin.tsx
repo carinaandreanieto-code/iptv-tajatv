@@ -3,8 +3,8 @@ import {
   collection, getDocs, addDoc, updateDoc, deleteDoc, doc, 
   query, where, orderBy, limit, Timestamp 
 } from "firebase/firestore";
-import { signInWithPopup, signOut } from "firebase/auth";
-import { db, auth, googleProvider, handleFirestoreError, OperationType } from "../lib/firebase";
+import { signInAnonymously, signOut } from "firebase/auth";
+import { db, auth, handleFirestoreError, OperationType } from "../lib/firebase";
 import { Customer, Channel, Pack, Ad, UserStatus } from "../types";
 import { 
   Users, Tv, Package, Megaphone, BarChart3, 
@@ -43,12 +43,9 @@ export default function Admin({ onBack }: AdminProps) {
   useEffect(() => {
     const unsub = auth.onAuthStateChanged((user) => {
       const sessionActive = sessionStorage.getItem("adminSession") === "true";
-      // Auto-validate if it's the specific owner email even without sessionActive
-      const isOwner = user?.email === "carinaandreanieto@gmail.com";
       
-      if (user && (sessionActive || isOwner)) {
+      if (user && sessionActive) {
         setIsAdminLoggedIn(true);
-        if (isOwner) sessionStorage.setItem("adminSession", "true");
         fetchData();
       } else if (!sessionActive) {
         setIsAdminLoggedIn(false);
@@ -81,7 +78,7 @@ export default function Admin({ onBack }: AdminProps) {
       try {
         setIsLoggingIn(true);
         setAdminError(false);
-        const result = await signInWithPopup(auth, googleProvider);
+        const result = await signInAnonymously(auth);
         if (result.user) {
           setIsAdminLoggedIn(true);
           sessionStorage.setItem("adminSession", "true");
@@ -89,11 +86,7 @@ export default function Admin({ onBack }: AdminProps) {
         }
       } catch (err: any) {
         console.error("Auth error", err);
-        if (err.code === 'auth/popup-blocked') {
-          alert('El navegador bloqueó la ventana emergente. Por favor, habilítala.');
-        } else if (err.code !== 'auth/popup-closed-by-user') {
-          alert('Error al iniciar sesión: ' + err.message);
-        }
+        alert('Error al acceder: ' + err.message + '. Asegúrese de tener habilitado el inicio de sesión anónimo en Firebase.');
         setAdminError(true);
       } finally {
         setIsLoggingIn(false);
