@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { collection, getDocs, addDoc, query, where } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../lib/firebase";
 import { Customer, Channel, Pack, Metric } from "../types";
-import Hls from "hls.js";
+import videojs from "video.js";
+import "video.js/dist/video-js.css";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   Play, Pause, Volume2, List, Settings, 
@@ -21,12 +22,14 @@ export default function Player({ customer, onLogout }: PlayerProps) {
   const [currentChannel, setCurrentChannel] = useState<Channel | null>(null);
   const [loading, setLoading] = useState(true);
   const [showControls, setShowControls] = useState(true);
-  const [videoError, setVideoError] = useState(false);
+  const [videoError, setVideoError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [volume, setVolume] = useState(1);
   const [selectedCategory, setSelectedCategory] = useState<string>("Todos");
   const [focusedIndex, setFocusedIndex] = useState(0);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const hlsRef = useRef<Hls | null>(null);
+  const videoContainerRef = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<any>(null);
 
   // Auto-hide controls
   useEffect(() => {
@@ -84,68 +87,92 @@ export default function Player({ customer, onLogout }: PlayerProps) {
     fetchContent();
   }, [customer]);
 
-  // Handle Video Playback
+  // Handle Video Playback with Video.js + HLS logic
   useEffect(() => {
-    if (!currentChannel || !videoRef.current) return;
-    setVideoError(false);
+    if (!currentChannel || !videoContainerRef.current) return;
+    
+    // Reset states
+    setVideoError(null);
+    setIsPlaying(false);
 
-    const video = videoRef.current;
-
-    if (Hls.isSupported()) {
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
+    // Initial Cleanup: Ensure previous player is fully disposed
+    if (playerRef.current) {
+      try {
+        playerRef.current.dispose();
+      } catch (e) {
+        console.error("Cleanup error:", e);
       }
-      const hls = new Hls({
-        startLevel: -1,
-        enableWorker: true,
-        xhrSetup: (xhr) => {
-          xhr.withCredentials = false;
-        },
-        manifestLoadingRetryDelay: 1000,
-        manifestLoadingMaxRetry: 5,
-      });
-      hlsRef.current = hls;
-      hls.loadSource(currentChannel.url);
-      hls.attachMedia(video);
-      
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        setVideoError(false);
-        video.play().catch(e => {
-          console.log("Autoplay blocked, waiting for interaction", e);
-        });
-      });
-      
-      hls.on(Hls.Events.ERROR, (_, data) => {
-        console.error("HLS Error:", data);
-        if (data.fatal) {
-          switch (data.type) {
-            case Hls.ErrorTypes.NETWORK_ERROR:
-              console.log("Fatal network error, trying to recover...");
-              hls.startLoad();
-              break;
-            case Hls.ErrorTypes.MEDIA_ERROR:
-              console.log("Fatal media error, trying to recover...");
-              hls.recoverMediaError();
-              break;
-            default:
-              console.error("Unrecoverable error");
-              setVideoError(true);
-              hls.destroy();
-              break;
-          }
-        }
-      });
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = currentChannel.url;
-      video.addEventListener('loadedmetadata', () => {
-        video.play();
-      });
-      video.addEventListener('error', () => {
-        setVideoError(true);
-      });
+      playerRef.current = null;
     }
 
-    // Log Metric
+    // Explicitly clear container to prevent residual elements or "Element not connected"
+    if (videoContainerRef.current) {
+      videoContainerRef.current.innerHTML = '';
+    }
+
+    // Create a new video element inside the stable container
+    const videoElement = document.createElement("video");
+    videoElement.className = "video-js vjs-big-play-centered vjs-tajattv-theme w-full h-full";
+    videoContainerRef.current.appendChild(videoElement);
+
+    const player = videojs(videoElement, {
+      autoplay: "muted",
+      controls: false,
+      preload: "auto",
+      responsive: true,
+      fluid: false, 
+      html5: {
+        vhs: {
+          withCredentials: false,
+          overrideNative: !videojs.browser.IS_SAFARI,
+          enableLowInitialPlaylist: true,
+          smoothQualityChange: true,
+          manifestLoadingRetryDelay: 2000,
+          manifestLoadingMaxRetry: 10,
+        },
+      },
+      sources: [{
+        src: currentChannel.url,
+        type: "application/x-mpegURL"
+      }]
+    });
+
+    playerRef.current = player;
+
+    player.on("play", () => setIsPlaying(true));
+    player.on("pause", () => setIsPlaying(false));
+    player.on("volumechange", () => setVolume(player.volume()));
+
+    player.on("ready", () => {
+      console.log("IPTV Player Ready:", currentChannel.name);
+      player.play().catch(e => {
+        console.log("Autoplay blocked or failed:", e);
+      });
+      
+      const vhs = player.tech() && (player.tech() as any).vhs;
+      if (vhs) {
+        vhs.on("error", (err: any) => {
+          console.error("[VHS Error Log]:", err.status, err);
+          if (err.status === 0 || err.status === 403) {
+            setVideoError(`Error de Acceso (Status: ${err.status}). El servidor IPTV bloqueó la conexión por CORS.`);
+          } else if (err.status >= 500) {
+            setVideoError("Error del Servidor: El canal está caído en este momento.");
+          }
+        });
+      }
+    });
+
+    player.on("error", () => {
+      const error = player.error();
+      console.error("[VideoJS Player Error]:", error);
+      if (error?.code === 4 || error?.code === 2) {
+        setVideoError("Error de Red/CORS: El servidor IPTV no permite el acceso desde esta aplicación.");
+      } else {
+        setVideoError(`Error de Transmisión (Código: ${error?.code}): Verifique su conexión.`);
+      }
+    });
+
+    // Restore metrics and persistence
     const logMetric = async () => {
       try {
         await addDoc(collection(db, "metrics"), {
@@ -154,17 +181,16 @@ export default function Player({ customer, onLogout }: PlayerProps) {
           timestamp: new Date().toISOString()
         });
       } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, "metrics");
+        console.error("Metric error", err);
       }
     };
     logMetric();
-
-    // Save for persistence
     localStorage.setItem(`lastChannel_${customer.customerNumber}`, currentChannel.id);
 
     return () => {
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
+      if (playerRef.current) {
+        playerRef.current.dispose();
+        playerRef.current = null;
       }
     };
   }, [currentChannel]);
@@ -317,14 +343,12 @@ export default function Player({ customer, onLogout }: PlayerProps) {
       {/* Main Player Area */}
       <main 
         onClick={() => setShowControls(prev => !prev)}
-        className="flex-1 bg-black relative group cursor-pointer"
+        className="flex-1 bg-black relative group cursor-pointer flex items-center justify-center"
       >
-        <video 
-          ref={videoRef}
-          className="w-full h-full object-contain pointer-events-none"
-          playsInline
-          autoPlay
-          onDoubleClick={(e) => (e.target as HTMLVideoElement).requestFullscreen()}
+        <div 
+          ref={videoContainerRef}
+          className="w-full h-full"
+          data-vjs-player
         />
 
         {/* Loading / Error States */}
@@ -333,12 +357,17 @@ export default function Player({ customer, onLogout }: PlayerProps) {
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center gap-4 z-10"
+              className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center gap-4 z-50 px-6"
             >
               <AlertCircle className="w-16 h-16 text-red-600 mb-2" />
-              <div className="text-center">
-                <h3 className="text-xl font-bold text-white">Error de Transmisión</h3>
-                <p className="text-gray-500 text-sm max-w-xs mt-2">No se pudo cargar la señal de <span className="text-red-500 font-bold">{currentChannel?.name}</span>. El servidor podría estar fuera de línea o el formato no es soportado.</p>
+              <div className="text-center px-6">
+                <h3 className="text-xl font-bold text-white uppercase tracking-wider">Error de Streaming</h3>
+                <p className="text-red-500 text-sm font-medium mt-2 max-w-sm">
+                  {videoError}
+                </p>
+                <p className="text-gray-500 text-xs mt-4">
+                  Canal: <span className="text-gray-300">{currentChannel?.name}</span>
+                </p>
               </div>
               <button 
                 onClick={() => window.location.reload()}
@@ -351,11 +380,11 @@ export default function Player({ customer, onLogout }: PlayerProps) {
         </AnimatePresence>
 
         {/* Overlay Controls (Auto-hide) */}
-        <div className={`absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/40 transition-opacity flex flex-col justify-between p-8 ${showControls || sidebarOpen ? "opacity-100" : "opacity-0"}`}>
+        <div className={`absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/40 transition-opacity flex flex-col justify-between p-8 z-10 ${showControls || sidebarOpen ? "opacity-100" : "opacity-0"}`}>
           <div className="flex justify-between items-start">
             <div className="flex items-center gap-3">
               <button 
-                onClick={() => setSidebarOpen(!sidebarOpen)}
+                onClick={(e) => { e.stopPropagation(); setSidebarOpen(!sidebarOpen); }}
                 className="bg-white/10 hover:bg-white/20 p-3 rounded-full backdrop-blur-md transition-colors"
                 title="Lista de Canales"
               >
@@ -365,14 +394,15 @@ export default function Player({ customer, onLogout }: PlayerProps) {
               {/* Device Mode Selector */}
               <div className="bg-black/40 backdrop-blur-md p-1 rounded-full border border-white/10 flex gap-1">
                  <button 
-                   onClick={() => setDeviceMode("tv")}
+                   onClick={(e) => { e.stopPropagation(); setDeviceMode("tv"); }}
                    className={`p-2 rounded-full transition-all ${deviceMode === "tv" ? "bg-red-600 text-white" : "text-gray-400 hover:text-white"}`}
                    title="Modo TV"
                  >
                     <Tv className="w-5 h-5" />
                  </button>
                  <button 
-                   onClick={() => {
+                   onClick={(e) => { 
+                     e.stopPropagation();
                      setDeviceMode("mobile");
                      setSidebarOpen(false);
                    }}
@@ -396,9 +426,22 @@ export default function Player({ customer, onLogout }: PlayerProps) {
             <button className="text-white/60 hover:text-white transition-colors">
               <ChevronLeft className="w-10 h-10" />
             </button>
-            <div className="w-20 h-20 bg-red-600 rounded-full flex items-center justify-center shadow-2xl shadow-red-600/40 cursor-pointer hover:scale-110 transition-transform">
-              <Play className="w-8 h-8 fill-white ml-1" />
-            </div>
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                if (playerRef.current) {
+                  if (isPlaying) playerRef.current.pause();
+                  else playerRef.current.play();
+                }
+              }}
+              className="w-20 h-20 bg-red-600 rounded-full flex items-center justify-center shadow-2xl shadow-red-600/40 cursor-pointer hover:scale-110 transition-transform outline-none"
+            >
+              {isPlaying ? (
+                <Pause className="w-8 h-8 fill-white" />
+              ) : (
+                <Play className="w-8 h-8 fill-white ml-1" />
+              )}
+            </button>
             <button className="text-white/60 hover:text-white transition-colors">
               <ChevronRight className="w-10 h-10" />
             </button>
@@ -406,13 +449,51 @@ export default function Player({ customer, onLogout }: PlayerProps) {
 
           <div className="flex items-center justify-between gap-6 px-4">
              <div className="flex items-center gap-6">
-                <Volume2 className="w-6 h-6 text-white/80" />
-                <div className="w-32 h-1 bg-white/20 rounded-full relative overflow-hidden">
-                   <div className="absolute top-0 left-0 h-full w-2/3 bg-white"></div>
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (playerRef.current) {
+                      playerRef.current.muted(!playerRef.current.muted());
+                    }
+                  }}
+                  className="text-white/80 hover:text-white"
+                >
+                  <Volume2 className="w-6 h-6" />
+                </button>
+                <div className="w-32 h-1 bg-white/20 rounded-full relative overflow-hidden group/vol">
+                   <input 
+                    type="range" 
+                    min="0" 
+                    max="1" 
+                    step="0.1" 
+                    value={volume}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      setVolume(val);
+                      if (playerRef.current) playerRef.current.volume(val);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute inset-0 w-full opacity-0 cursor-pointer z-10"
+                   />
+                   <div className="absolute top-0 left-0 h-full bg-white transition-all" style={{ width: `${volume * 100}%` }}></div>
                 </div>
              </div>
              <div className="flex items-center gap-4">
-                <button className="text-white/80 hover:text-white transition-colors"><Maximize className="w-6 h-6" /></button>
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (videoContainerRef.current) {
+                      if (document.fullscreenElement) {
+                        document.exitFullscreen();
+                      } else {
+                        videoContainerRef.current.requestFullscreen();
+                      }
+                    }
+                  }}
+                  className="text-white/80 hover:text-white transition-colors"
+                >
+                  <Maximize className="w-6 h-6" />
+                </button>
                 <button className="text-white/80 hover:text-white transition-colors"><Settings className="w-6 h-6" /></button>
              </div>
           </div>
@@ -425,7 +506,7 @@ export default function Player({ customer, onLogout }: PlayerProps) {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 20 }}
-              className="absolute bottom-10 left-10 pointer-events-none"
+              className="absolute bottom-10 left-10 pointer-events-none z-10"
             >
               <div className="bg-black/60 backdrop-blur-2xl border border-white/5 rounded-2xl p-6 flex items-center gap-6 shadow-3xl">
                 <div className="w-16 h-16 bg-[#1a1a1a] rounded-xl flex items-center justify-center overflow-hidden border border-white/10">
@@ -449,6 +530,17 @@ export default function Player({ customer, onLogout }: PlayerProps) {
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #444; }
+
+        .video-js {
+          width: 100% !important;
+          height: 100% !important;
+          background-color: transparent !important;
+        }
+        .vjs-tech {
+          width: 100% !important;
+          height: 100% !important;
+          object-fit: contain !important;
+        }
       `}</style>
     </div>
   );
