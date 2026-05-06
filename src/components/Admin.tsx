@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { 
   collection, getDocs, addDoc, updateDoc, deleteDoc, doc, 
-  query, where, orderBy, limit, Timestamp, writeBatch 
+  query, where, orderBy, limit, Timestamp 
 } from "firebase/firestore";
 import { signInAnonymously, signOut } from "firebase/auth";
 import { db, auth, handleFirestoreError, OperationType } from "../lib/firebase";
@@ -29,8 +29,6 @@ export default function Admin({ onBack }: AdminProps) {
   const [adminPassword, setAdminPassword] = useState("");
   const [adminError, setAdminError] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [showConfirmDeleteAll, setShowConfirmDeleteAll] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("clientes");
   
   // Data states
@@ -112,61 +110,32 @@ export default function Admin({ onBack }: AdminProps) {
     try {
       // Usar el proxy para evitar problemas de CORS
       const response = await axios.get(`/api/proxy-m3u?url=${encodeURIComponent(url)}`);
-      const m3uContent = response.data;
-
-      // Usar el parser oficial
-      const parser = new Parser();
-      parser.push(m3uContent);
-      parser.end();
-
+      
+      const lines = response.data.split('\n');
       const newChannels: Omit<Channel, 'id'>[] = [];
-      const { items } = parser.manifest;
-
-      if (items && items.length > 0) {
-        // El parser de video-js m3u8-parser a veces devuelve diferente estructura según el tipo de playlist
-        items.forEach((item: any) => {
-          if (item.uri) {
+      
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line.startsWith('#EXTINF')) {
+          const info = line;
+          const nameMatch = info.match(/,(.*)$/);
+          const logoMatch = info.match(/tvg-logo="(.*?)"/);
+          const groupMatch = info.match(/group-title="(.*?)"/);
+          
+          const streamUrl = lines[i+1]?.trim();
+          if (streamUrl && !streamUrl.startsWith('#')) {
             newChannels.push({
-              name: item.name || 'Canal sin nombre',
-              logo: item.attributes?.['tvg-logo'] || '',
-              category: item.attributes?.['group-title'] || 'General',
-              url: item.uri
+              name: nameMatch ? nameMatch[1].trim() : 'Canal sin nombre',
+              logo: logoMatch ? logoMatch[1] : '',
+              category: groupMatch ? groupMatch[1] : 'General',
+              url: streamUrl
             });
-          }
-        });
-      } else {
-        // Fallback al parsing manual si el parser no detecta el formato (algunas listas IPTV no son estándar HLS)
-        const lines = m3uContent.split(/\r?\n/);
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i].trim();
-          if (line.startsWith('#EXTINF')) {
-            const info = line;
-            const nameMatch = info.match(/,(.*)$/);
-            const logoMatch = info.match(/tvg-logo="(.*?)"/);
-            const groupMatch = info.match(/group-title="(.*?)"/);
-            
-            // Buscar la siguiente línea que no sea un comentario
-            let j = i + 1;
-            while (j < lines.length && lines[j].trim().startsWith('#')) {
-              j++;
-            }
-            
-            const streamUrl = lines[j]?.trim();
-            if (streamUrl) {
-              newChannels.push({
-                name: nameMatch ? nameMatch[1].trim() : 'Canal sin nombre',
-                logo: logoMatch ? logoMatch[1] : '',
-                category: groupMatch ? groupMatch[1] : 'General',
-                url: streamUrl
-              });
-              i = j; // Saltar a la línea de la URL
-            }
           }
         }
       }
 
       if (newChannels.length === 0) {
-        alert("No se encontraron canales válidos. Asegúrese de que sea un archivo M3U estándar.");
+        alert("No se encontraron canales válidos en la lista. Asegúrese de que sea un formato M3U estándar.");
         return;
       }
 
@@ -179,10 +148,9 @@ export default function Admin({ onBack }: AdminProps) {
       fetchData();
       alert(`¡Éxito! Se han importado ${toImport.length} canales (máximo 100 por vez).`);
       setIsModalOpen(false);
-    } catch (err: any) {
+    } catch (err) {
       console.error("Import error", err);
-      const errorMsg = err.response?.data?.error || err.message;
-      alert(`Error al importar: ${errorMsg}. Verifique que la URL sea válida y accesible.`);
+      alert("Error al importar M3U8. Verifique que la URL sea válida y accesible.");
     }
   };
 
@@ -263,44 +231,6 @@ export default function Admin({ onBack }: AdminProps) {
       fetchData();
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `packs/${editingItem?.id || 'new'}`);
-    }
-  };
-
-  const handleDeleteAllChannels = async () => {
-    if (!showConfirmDeleteAll) {
-      setShowConfirmDeleteAll(true);
-      return;
-    }
-    
-    setIsDeleting(true);
-    try {
-      const snap = await getDocs(collection(db, "channels"));
-      if (snap.empty) {
-        alert("No hay canales para borrar.");
-        setShowConfirmDeleteAll(false);
-        setIsDeleting(false);
-        return;
-      }
-      
-      const total = snap.size;
-      const docs = snap.docs;
-      
-      // Borramos en bloques de 500 (límite de batch de Firestore)
-      for (let i = 0; i < docs.length; i += 500) {
-        const batch = writeBatch(db);
-        const chunk = docs.slice(i, i + 500);
-        chunk.forEach(d => batch.delete(d.ref));
-        await batch.commit();
-      }
-      
-      await fetchData();
-      alert(`Se han eliminado ${total} canales correctamente.`);
-      setShowConfirmDeleteAll(false);
-    } catch (err) {
-      console.error("Error deleting all channels", err);
-      handleFirestoreError(err, OperationType.DELETE, "channels/all");
-    } finally {
-      setIsDeleting(false);
     }
   };
 
@@ -489,36 +419,6 @@ export default function Admin({ onBack }: AdminProps) {
 
         {activeTab === "iptv" && (
            <div className="space-y-6">
-              <div className="flex justify-end gap-3">
-                {showConfirmDeleteAll && !isDeleting && (
-                  <button 
-                    onClick={() => setShowConfirmDeleteAll(false)}
-                    className="px-4 py-2 bg-gray-800 text-gray-400 rounded-xl text-xs font-black hover:bg-gray-700 transition-all uppercase tracking-widest"
-                  >
-                    Cancelar
-                  </button>
-                )}
-                <button 
-                  onClick={handleDeleteAllChannels}
-                  disabled={isDeleting}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black border transition-all uppercase tracking-widest disabled:opacity-50 ${
-                    showConfirmDeleteAll 
-                      ? "bg-red-600 text-white border-red-600 hover:bg-red-700 animate-pulse" 
-                      : "bg-red-600/10 text-red-500 border border-red-600/20 hover:bg-red-600/20"
-                  }`}
-                >
-                  {isDeleting ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" /> Borrando...
-                    </>
-                  ) : (
-                    <>
-                      <Trash2 className="w-4 h-4" /> 
-                      {showConfirmDeleteAll ? "Haga clic para CONFIRMAR BORRADO" : "Borrar todos los canales"}
-                    </>
-                  )}
-                </button>
-              </div>
               <div className="bg-[#0d0d0d] border border-gray-800 rounded-2xl overflow-hidden">
                 <table className="w-full text-left text-sm">
                   <thead className="bg-[#121212] border-b border-gray-800">
