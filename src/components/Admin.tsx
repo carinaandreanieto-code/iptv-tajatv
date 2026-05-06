@@ -112,32 +112,61 @@ export default function Admin({ onBack }: AdminProps) {
     try {
       // Usar el proxy para evitar problemas de CORS
       const response = await axios.get(`/api/proxy-m3u?url=${encodeURIComponent(url)}`);
-      
-      const lines = response.data.split('\n');
+      const m3uContent = response.data;
+
+      // Usar el parser oficial
+      const parser = new Parser();
+      parser.push(m3uContent);
+      parser.end();
+
       const newChannels: Omit<Channel, 'id'>[] = [];
-      
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (line.startsWith('#EXTINF')) {
-          const info = line;
-          const nameMatch = info.match(/,(.*)$/);
-          const logoMatch = info.match(/tvg-logo="(.*?)"/);
-          const groupMatch = info.match(/group-title="(.*?)"/);
-          
-          const streamUrl = lines[i+1]?.trim();
-          if (streamUrl && !streamUrl.startsWith('#')) {
+      const { items } = parser.manifest;
+
+      if (items && items.length > 0) {
+        // El parser de video-js m3u8-parser a veces devuelve diferente estructura según el tipo de playlist
+        items.forEach((item: any) => {
+          if (item.uri) {
             newChannels.push({
-              name: nameMatch ? nameMatch[1].trim() : 'Canal sin nombre',
-              logo: logoMatch ? logoMatch[1] : '',
-              category: groupMatch ? groupMatch[1] : 'General',
-              url: streamUrl
+              name: item.name || 'Canal sin nombre',
+              logo: item.attributes?.['tvg-logo'] || '',
+              category: item.attributes?.['group-title'] || 'General',
+              url: item.uri
             });
+          }
+        });
+      } else {
+        // Fallback al parsing manual si el parser no detecta el formato (algunas listas IPTV no son estándar HLS)
+        const lines = m3uContent.split(/\r?\n/);
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (line.startsWith('#EXTINF')) {
+            const info = line;
+            const nameMatch = info.match(/,(.*)$/);
+            const logoMatch = info.match(/tvg-logo="(.*?)"/);
+            const groupMatch = info.match(/group-title="(.*?)"/);
+            
+            // Buscar la siguiente línea que no sea un comentario
+            let j = i + 1;
+            while (j < lines.length && lines[j].trim().startsWith('#')) {
+              j++;
+            }
+            
+            const streamUrl = lines[j]?.trim();
+            if (streamUrl) {
+              newChannels.push({
+                name: nameMatch ? nameMatch[1].trim() : 'Canal sin nombre',
+                logo: logoMatch ? logoMatch[1] : '',
+                category: groupMatch ? groupMatch[1] : 'General',
+                url: streamUrl
+              });
+              i = j; // Saltar a la línea de la URL
+            }
           }
         }
       }
 
       if (newChannels.length === 0) {
-        alert("No se encontraron canales válidos en la lista. Asegúrese de que sea un formato M3U estándar.");
+        alert("No se encontraron canales válidos. Asegúrese de que sea un archivo M3U estándar.");
         return;
       }
 
@@ -150,9 +179,10 @@ export default function Admin({ onBack }: AdminProps) {
       fetchData();
       alert(`¡Éxito! Se han importado ${toImport.length} canales (máximo 100 por vez).`);
       setIsModalOpen(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Import error", err);
-      alert("Error al importar M3U8. Verifique que la URL sea válida y accesible.");
+      const errorMsg = err.response?.data?.error || err.message;
+      alert(`Error al importar: ${errorMsg}. Verifique que la URL sea válida y accesible.`);
     }
   };
 

@@ -24,17 +24,41 @@ async function startServer() {
     if (!url || typeof url !== "string") {
       return res.status(400).json({ error: "URL inválida" });
     }
+
+    console.log(`Proxying request to: ${url}`);
+
     try {
       const response = await axios.get(url, {
-        timeout: 10000,
+        timeout: 15000,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': '*/*',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+        // Don't follow too many redirects
+        maxRedirects: 5,
+        // Accept any response status to handle it manually if needed
+        validateStatus: (status) => status >= 200 && status < 300,
       });
+      
+      console.log(`Successfully fetched M3U8 from ${url}. Status: ${response.status}`);
       res.send(response.data);
-    } catch (error) {
-      console.error("Error proxying M3U8:", error);
-      res.status(500).json({ error: "Error al obtener la lista desde el servidor remoto." });
+    } catch (error: any) {
+      console.error(`Error proxying M3U8 from ${url}:`, error.message);
+      
+      if (error.response) {
+        // The server responded with a status code outside the 2xx range
+        res.status(error.response.status).json({ 
+          error: `El servidor remoto respondió con error ${error.response.status}`,
+          details: error.response.data
+        });
+      } else if (error.request) {
+        // The request was made but no response was received
+        res.status(504).json({ error: "No se recibió respuesta del servidor remoto (Timeout o Down)." });
+      } else {
+        // Something happened in setting up the request
+        res.status(500).json({ error: `Error de configuración: ${error.message}` });
+      }
     }
   });
 
