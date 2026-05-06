@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { 
   collection, getDocs, addDoc, updateDoc, deleteDoc, doc, 
-  query, where, orderBy, limit, Timestamp 
+  query, where, orderBy, limit, Timestamp, writeBatch 
 } from "firebase/firestore";
 import { signInAnonymously, signOut } from "firebase/auth";
 import { db, auth, handleFirestoreError, OperationType } from "../lib/firebase";
@@ -29,6 +29,8 @@ export default function Admin({ onBack }: AdminProps) {
   const [adminPassword, setAdminPassword] = useState("");
   const [adminError, setAdminError] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showConfirmDeleteAll, setShowConfirmDeleteAll] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("clientes");
   
   // Data states
@@ -234,6 +236,44 @@ export default function Admin({ onBack }: AdminProps) {
     }
   };
 
+  const handleDeleteAllChannels = async () => {
+    if (!showConfirmDeleteAll) {
+      setShowConfirmDeleteAll(true);
+      return;
+    }
+    
+    setIsDeleting(true);
+    try {
+      const snap = await getDocs(collection(db, "channels"));
+      if (snap.empty) {
+        alert("No hay canales para borrar.");
+        setShowConfirmDeleteAll(false);
+        setIsDeleting(false);
+        return;
+      }
+      
+      const total = snap.size;
+      const docs = snap.docs;
+      
+      // Borramos en bloques de 500 (límite de batch de Firestore)
+      for (let i = 0; i < docs.length; i += 500) {
+        const batch = writeBatch(db);
+        const chunk = docs.slice(i, i + 500);
+        chunk.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+      
+      await fetchData();
+      alert(`Se han eliminado ${total} canales correctamente.`);
+      setShowConfirmDeleteAll(false);
+    } catch (err) {
+      console.error("Error deleting all channels", err);
+      handleFirestoreError(err, OperationType.DELETE, "channels/all");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   if (!isAdminLoggedIn) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#050505] p-6 text-center">
@@ -419,6 +459,36 @@ export default function Admin({ onBack }: AdminProps) {
 
         {activeTab === "iptv" && (
            <div className="space-y-6">
+              <div className="flex justify-end gap-3">
+                {showConfirmDeleteAll && !isDeleting && (
+                  <button 
+                    onClick={() => setShowConfirmDeleteAll(false)}
+                    className="px-4 py-2 bg-gray-800 text-gray-400 rounded-xl text-xs font-black hover:bg-gray-700 transition-all uppercase tracking-widest"
+                  >
+                    Cancelar
+                  </button>
+                )}
+                <button 
+                  onClick={handleDeleteAllChannels}
+                  disabled={isDeleting}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black border transition-all uppercase tracking-widest disabled:opacity-50 ${
+                    showConfirmDeleteAll 
+                      ? "bg-red-600 text-white border-red-600 hover:bg-red-700 animate-pulse" 
+                      : "bg-red-600/10 text-red-500 border border-red-600/20 hover:bg-red-600/20"
+                  }`}
+                >
+                  {isDeleting ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" /> Borrando...
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-4 h-4" /> 
+                      {showConfirmDeleteAll ? "Haga clic para CONFIRMAR BORRADO" : "Borrar todos los canales"}
+                    </>
+                  )}
+                </button>
+              </div>
               <div className="bg-[#0d0d0d] border border-gray-800 rounded-2xl overflow-hidden">
                 <table className="w-full text-left text-sm">
                   <thead className="bg-[#121212] border-b border-gray-800">
